@@ -10,7 +10,7 @@ import matplotlib.patches as mpatches
 import seaborn as sns
 import matplotlib.ticker as ticker
 import matplotlib.cm as cm
-from solver import sol_dip_virus_pde_fft, default_params
+from pdesolver import sol_dip_virus_pde_fft, default_params
 
 
 def classify_outcome(result, params, chase_std_dev_threshold=0.1):

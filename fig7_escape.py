@@ -3,7 +3,7 @@ from matplotlib.colors import LogNorm
 import numpy as np
 import concurrent.futures
 from tqdm import tqdm
-from modified_FFT import sol_dip_virus_pde_fft
+from pdesolver import sol_dip_virus_pde_fft
 import os
 
 def run_single_simulation(task):
