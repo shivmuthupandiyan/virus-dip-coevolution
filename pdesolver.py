@@ -5,7 +5,7 @@ from scipy.fft import next_fast_len
 from scipy.sparse import diags 
 
 default_params = {
-        "nx": 50, "bord": 5, "T": 100,
+        "nx": 50, "bord": 5, "T": 200,
         "mu": 4e-3, "gamma": 0.3, 'eta': 1e-3,
         "r_v": 1, "alpha": 0.025, "beta": 0.025,
         "K_cap": 1e8, "kappa": 1e-7, "sigma": 1,
@@ -100,8 +100,8 @@ def sol_dip_virus_pde_fft(params, initial_v_density=None, initial_d_density=None
     
     Q0 = np.concatenate([v_init.flatten(), d_init.flatten()])
     
-    A_1D = diags([-2,1,1], [0,-1,1], shape=(nx,nx)).toarray(); A_1D[0,1]=2; A_1D[-1,-2]=2; A=A_1D/dx**2
-    B_1D = diags([-2,1,1], [0,-1,1], shape=(ny,ny)).toarray(); B_1D[0,1]=2; B_1D[-1,-2]=2; B=B_1D/dy**2
+    A_1D = diags([-2.,1.,1.], [0,-1,1], shape=(nx,nx), dtype=float).toarray(); A_1D[0,1]=2; A_1D[-1,-2]=2; A=A_1D/dx**2
+    B_1D = diags([-2.,1.,1.], [0,-1,1], shape=(ny,ny), dtype=float).toarray(); B_1D[0,1]=2; B_1D[-1,-2]=2; B=B_1D/dy**2
     
     fft_K_exp = create_fft_exp_kernel_padded(upd_params, 'sigma', padded_nx, padded_ny)
     
@@ -129,29 +129,34 @@ def sol_dip_virus_pde_fft(params, initial_v_density=None, initial_d_density=None
     num_t = len(sol.t)
     V_total_time, D_total_time = np.zeros(num_t), np.zeros(num_t)
     mean_phenotype_v, mean_phenotype_d = np.full((num_t, 2), np.nan), np.full((num_t, 2), np.nan)
-    
+    mean_dist_from_origin_v = np.full(num_t, np.nan)
+
+    distances_from_origin = np.sqrt(PHENOx**2 + PHENOy**2)
+
     v_indices = slice(0, nx * ny)
     d_indices = slice(nx * ny, None)
-    
+
     for i in range(num_t):
         v_density = np.maximum(0, sol.y[v_indices, i]).reshape(ny, nx)
         d_density = np.maximum(0, sol.y[d_indices, i]).reshape(ny, nx)
-        
+
         V_total_time[i] = np.sum(v_density) * dx * dy
         D_total_time[i] = np.sum(d_density) * dx * dy
 
         if V_total_time[i] > 1e-12:
             mean_phenotype_v[i, 0] = np.sum(PHENOx * v_density) * dx * dy / V_total_time[i]
             mean_phenotype_v[i, 1] = np.sum(PHENOy * v_density) * dx * dy / V_total_time[i]
-        
+            mean_dist_from_origin_v[i] = np.sum(distances_from_origin * v_density) * dx * dy / V_total_time[i]
+
         if D_total_time[i] > 1e-12:
             mean_phenotype_d[i, 0] = np.sum(PHENOx * d_density) * dx * dy / D_total_time[i]
             mean_phenotype_d[i, 1] = np.sum(PHENOy * d_density) * dx * dy / D_total_time[i]
-            
-    
+
+
     base_results = {
         "time_points": sol.t, "V_total_time": V_total_time, "D_total_time": D_total_time,
         "mean_phenotype_v": mean_phenotype_v, "mean_phenotype_d": mean_phenotype_d,
+        "mean_dist_from_origin_v": mean_dist_from_origin_v,
         "params": upd_params, "success": sol.success, "termination_reason": termination_reason,
         "dip_extinction_count": dip_extinction_count
     }

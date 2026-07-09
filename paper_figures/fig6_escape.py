@@ -44,20 +44,18 @@ def sweep_parameters_multiprocess(alpha_list, kappa_list, override_params=None):
 
 def summarize_endstate(res, d_thresh=1.0, final_frac=0.1):
     """Calculates summary metrics from a single simulation result."""
-    # Ensure all required keys exist, return NaNs otherwise
-    required_keys = ['time_points', 'V_total_time', 'params', 'shape_stats_v']
-    if not all(k in res for k in required_keys) or 'mean_distance_from_origin' not in res['shape_stats_v']:
+    required_keys = ['time_points', 'V_total_time', 'params', 'mean_dist_from_origin_v']
+    if not all(k in res for k in required_keys):
         return {'X_extent': np.nan, 'E_escape': np.nan, 'S_suppress': np.nan}
 
     t = res['time_points']
     V = res['V_total_time']
     K = res['params']['K_cap']
-    d = res['shape_stats_v']['mean_distance_from_origin']
-    
-    # Handle cases where simulation might have failed and returned empty lists/arrays
+    d = res['mean_dist_from_origin_v']
+
     if len(t) == 0 or len(V) == 0 or len(d) == 0:
         return {'X_extent': np.nan, 'E_escape': np.nan, 'S_suppress': np.nan}
-        
+
     n = max(1, int(len(t) * final_frac))
     d_final_mean = float(np.nanmean(d[-n:]))
     S = float(np.log10(max(np.nanmean(V[-n:]), 1e-12) / K))
@@ -68,7 +66,7 @@ def summarize_endstate(res, d_thresh=1.0, final_frac=0.1):
 
 def plot_line_trajectories_dual_panel(alpha_list, kappa_list, X_grid, S_grid, outpath=None):
     """
-    Figure 3A: Two-panel line plot showing log population and escape vs κ, 
+    Fig 6A-B: Two-panel line plot showing virus population and escape vs κ,
     with separate line styles and markers for different α values (black and white).
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -124,7 +122,7 @@ def plot_line_trajectories_dual_panel(alpha_list, kappa_list, X_grid, S_grid, ou
 
 def plot_tradeoff_parametric_curves(alpha_list, kappa_list, X_grid, S_grid, outpath=None):
     """
-    Figure 3B: Trade-off plot showing log population vs escape extent,
+    Supplementary trade-off view: log population vs escape extent,
     with parametric curves traced by κ for each α value (black and white).
     """
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -183,7 +181,7 @@ def plot_tradeoff_parametric_curves(alpha_list, kappa_list, X_grid, S_grid, outp
     return fig, ax
 
 def plot_escape_extent_map_updated(alpha_list, kappa_list, X_grid, S_grid, E_grid, outpath=None):
-    """Figure 1: Heatmap of escape extent with log population contours and no-escape hatching."""
+    """Escape-extent heatmap with log-population contours and no-escape hatching (exploratory)."""
     fig, ax = plt.subplots(figsize=(6.2, 5.2))
     im = ax.imshow(X_grid, origin='lower', aspect='auto', cmap='viridis',
                    extent=[0, len(kappa_list)-1, 0, len(alpha_list)-1])
@@ -207,7 +205,7 @@ def plot_escape_extent_map_updated(alpha_list, kappa_list, X_grid, S_grid, E_gri
     return fig, ax
 
 def plot_safe_kappa_bands_updated(alpha_list, kappa_list, E_grid, S_grid, S_target=-1.0, outpath=None):
-    """Figure 2: Horizontal bands showing the 'safe' kappa window for each alpha."""
+    """Horizontal bands showing the 'safe' kappa window for each alpha (exploratory)."""
     fig, ax = plt.subplots(figsize=(6.4, 4.2))
     for i, a in enumerate(alpha_list):
         # Indices where no escape and adequate log population
@@ -238,8 +236,9 @@ if __name__ == '__main__':
     alpha_list = np.array([1e-2, 5e-2, 1e-1, 5e-1, 1])
     kappa_list = np.logspace(-9, -6.5, 200)
     output_dir = 'all_runs/threshold_pareto'
-    # For quick previews, override spatial/time resolution:
-    override = {}
+    os.makedirs(output_dir, exist_ok=True)
+    # Fig 6 in the published paper runs to T=100.
+    override = {'T':100}
 
     # 2. Run the parameter sweep (in parallel)
     print("Starting parameter sweep...")
@@ -255,7 +254,7 @@ if __name__ == '__main__':
         for j in range(len(kappa_list)):
             r = results_grid[i, j]
             if r is None or not r.get('success', False): continue
-            summ = summarize_endstate(r, d_thresh=1.0, final_frac=0.2) # Using last 20%
+            summ = summarize_endstate(r, d_thresh=1.0, final_frac=0.2) # Using last 20% (t in [80, 100])
             X_grid[i, j] = summ['X_extent']
             E_grid[i, j] = summ['E_escape']
             S_grid[i, j] = summ['S_suppress']
@@ -266,10 +265,10 @@ if __name__ == '__main__':
     # New line trajectory visualizations
     plt.rcParams['svg.fonttype'] = 'none'
 
-    plot_line_trajectories_dual_panel(alpha_list, kappa_list, X_grid, S_grid, 
-                                     outpath=os.path.join(output_dir,'fig3a_line_trajectories.svg'))
-    plot_tradeoff_parametric_curves(alpha_list, kappa_list, X_grid, S_grid, 
-                                   outpath=os.path.join(output_dir,'fig3b_tradeoff_curves.png'))
+    plot_line_trajectories_dual_panel(alpha_list, kappa_list, X_grid, S_grid,
+                                     outpath=os.path.join(output_dir,'fig6ab_line_trajectories.svg'))
+    plot_tradeoff_parametric_curves(alpha_list, kappa_list, X_grid, S_grid,
+                                   outpath=os.path.join(output_dir,'fig6_tradeoff_extra.png'))
     
     print("All figures generated and saved to PNG files.")
     plt.show()

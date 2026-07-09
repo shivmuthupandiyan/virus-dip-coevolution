@@ -5,6 +5,7 @@ import pandas as pd
 from scipy.stats import qmc
 import multiprocessing
 from functools import partial
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
@@ -63,33 +64,76 @@ def classify_outcome(result, params, chase_std_dev_threshold=0.1):
     return 'Chase' if np.std(distance) > chase_std_dev_threshold else 'Static Coexistence'
 
 
+def truncate_result(result, T_cutoff):
+    """Truncate a simulation result to time <= T_cutoff."""
+    mask = result['time_points'] <= T_cutoff
+    return {
+        'time_points': result['time_points'][mask],
+        'V_total_time': result['V_total_time'][mask],
+        'D_total_time': result['D_total_time'][mask],
+        'mean_phenotype_v': result['mean_phenotype_v'][mask],
+        'mean_phenotype_d': result['mean_phenotype_d'][mask],
+        'termination_reason': result['termination_reason'],
+        'success': result['success'],
+        'params': result['params'],
+    }
+
+
 def run_simulation_worker(params_dict):
     """
     Run a single simulation with given parameters.
+
+    For convergence-check samples (flagged with _convergence_check=True),
+    runs to 2*T, then classifies at both T and 2*T to validate that T is sufficient.
 
     Returns
     -------
     pandas.Series
         Parameters and outcome, plus final virus and DIP counts.
+        Convergence samples additionally include outcome_2T and convergence_match.
     """
     try:
-        result = sol_dip_virus_pde_fft(params_dict)
-        # Pass the params_dict to the classifier
-        outcome = classify_outcome(result, params_dict)
+        is_convergence = params_dict.pop('_convergence_check', False)
+        base_T = params_dict.pop('_base_T', params_dict['T'])
 
+        result = sol_dip_virus_pde_fft(params_dict)
+
+        if is_convergence:
+            result_truncated = truncate_result(result, base_T)
+            outcome = classify_outcome(result_truncated, params_dict)
+            outcome_2T = classify_outcome(result, params_dict)
+            final_V = result_truncated['V_total_time'][-1]
+            final_D = result_truncated['D_total_time'][-1]
+        else:
+            outcome = classify_outcome(result, params_dict)
+            outcome_2T = None
+            final_V = result['V_total_time'][-1]
+            final_D = result['D_total_time'][-1]
+
+        # Report the standardized T in the output
+        params_dict['T'] = base_T
         output = pd.Series(params_dict)
         output['outcome'] = outcome
-        output['final_V'] = result['V_total_time'][-1]
-        output['final_D'] = result['D_total_time'][-1]
+        output['final_V'] = final_V
+        output['final_D'] = final_D
+
+        if is_convergence:
+            output['outcome_2T'] = outcome_2T
+            output['convergence_match'] = (outcome == outcome_2T)
+
         return output
     except Exception as e:
         print(f"[ERROR] Worker failed with params {params_dict}: {e}")
         return None
 
 
-def run_lhs_sweep(param_ranges, n_samples, base_params=None, log_params=None, n_cpu=None):
+def run_lhs_sweep(param_ranges, n_samples, base_params=None, log_params=None,
+                  n_cpu=None, convergence_frac=0.1):
     """
     Perform Latin Hypercube Sampling (LHS) sweep over parameter space.
+
+    A random fraction (convergence_frac) of samples are run to 2*T and
+    classified at both T and 2*T to validate convergence.
     """
     base_params = base_params or default_params.copy()
     log_params = log_params or []
@@ -100,8 +144,14 @@ def run_lhs_sweep(param_ranges, n_samples, base_params=None, log_params=None, n_
     sampler = qmc.LatinHypercube(d=len(param_ranges), seed=42)
     unit_samples = sampler.random(n=n_samples)
 
+    # Select subset for convergence validation
+    n_convergence = int(n_samples * convergence_frac)
+    rng = np.random.default_rng(seed=123)
+    convergence_indices = set(rng.choice(n_samples, size=n_convergence, replace=False))
+    print(f"[INFO] {n_convergence} samples flagged for convergence check (T={base_params['T']} vs T={2 * base_params['T']}).")
+
     all_sim_params = []
-    for sample in unit_samples:
+    for i, sample in enumerate(unit_samples):
         params = base_params.copy()
         for (p_name, (p_min, p_max)), sample_val in zip(param_ranges.items(), sample):
             if p_name in log_params:
@@ -109,11 +159,18 @@ def run_lhs_sweep(param_ranges, n_samples, base_params=None, log_params=None, n_
             else:
                 scaled_val = p_min + sample_val * (p_max - p_min)
             params[p_name] = scaled_val
+
+        if i in convergence_indices:
+            params['_convergence_check'] = True
+            params['_base_T'] = params['T']
+            params['T'] = 2 * params['T']
+
         all_sim_params.append(params)
 
     start_time = time.time()
     with multiprocessing.Pool(processes=n_cpu) as pool:
-        results_list = pool.map(run_simulation_worker, all_sim_params)
+        results_list = list(tqdm(pool.imap(run_simulation_worker, all_sim_params),
+                                 total=len(all_sim_params), desc="LHS sweep"))
     print(f"[INFO] Sweep finished in {(time.time() - start_time) / 60:.2f} minutes.")
 
     return pd.DataFrame([res for res in results_list if res is not None])
@@ -247,6 +304,53 @@ def plot_lhs_results(df, sweep_params, log_params, save_dir, n_bins=10, use_hatc
     print("[INFO] All individual greyscale labeled plots saved.")
 
 
+def report_convergence(df, save_dir):
+    """Report and save convergence validation stats (T vs 2T classifications)."""
+    conv = df[df['convergence_match'].notna()].copy()
+    if len(conv) == 0:
+        print("[INFO] No convergence data found.")
+        return
+
+    n = len(conv)
+    n_match = int(conv['convergence_match'].sum())
+    n_mismatch = n - n_match
+    mismatch_rate = n_mismatch / n * 100
+
+    outcomes = ['Chase', 'Static Coexistence', 'DIP Extinction', 'Coextinction']
+    ct = pd.crosstab(conv['outcome'], conv['outcome_2T'],
+                     rownames=['T'], colnames=['2T'], dropna=False)
+    ct = ct.reindex(index=outcomes, columns=outcomes, fill_value=0)
+
+    lines = []
+    lines.append("=" * 60)
+    lines.append("CONVERGENCE VALIDATION: T vs 2T")
+    lines.append("=" * 60)
+    lines.append(f"Convergence samples:  {n}")
+    lines.append(f"Matching outcomes:    {n_match} ({n_match/n*100:.1f}%)")
+    lines.append(f"Mismatched outcomes:  {n_mismatch} ({mismatch_rate:.1f}%)")
+    lines.append("")
+    lines.append("Confusion matrix (rows=T, cols=2T):")
+    lines.append(ct.to_string())
+    lines.append("")
+
+    mismatches = conv[~conv['convergence_match'].astype(bool)]
+    if len(mismatches) > 0:
+        lines.append("Mismatch transitions (T -> 2T):")
+        transitions = mismatches.groupby(['outcome', 'outcome_2T']).size()
+        for (o1, o2), count in transitions.items():
+            lines.append(f"  {o1} -> {o2}: {count}")
+    lines.append("=" * 60)
+
+    report = "\n".join(lines)
+    print(report)
+
+    os.makedirs(save_dir, exist_ok=True)
+    report_path = os.path.join(save_dir, "convergence_report.txt")
+    with open(report_path, 'w') as f:
+        f.write(report)
+    print(f"[INFO] Convergence report saved to {report_path}")
+
+
 def generate_legend_svg(save_dir):
     """
     Generates and saves a standalone SVG legend for the plots into the svg/ subdirectory.
@@ -288,10 +392,10 @@ if __name__ == '__main__':
         'mu': (9e-5, 1.1e-2)
     }
     log_scale_params = ['kappa', 'eta', 'mu', 'alpha', 'beta']
-    num_samples = 10004
+    num_samples = 10000
     base_simulation_params = default_params.copy()
     base_simulation_params.update({
-        "T": 150,
+        "T": 200,
         "r_v": 1,
         "K_cap": 1,
         "sigma": 1,
@@ -313,11 +417,11 @@ if __name__ == '__main__':
                                    base_params=base_simulation_params,
                                    log_params=log_scale_params,
                                    n_cpu=multiprocessing.cpu_count() - 1)
-        # results_df.to_pickle(results_filename)
+        results_df.to_pickle(results_filename)
         print(f"[INFO] Results saved to {results_filename}")
 
     plot_save_dir = os.path.dirname(results_filename)
-    
+
+    report_convergence(results_df, save_dir=plot_save_dir)
     plot_lhs_results(results_df, list(param_ranges_to_sweep.keys()), log_scale_params, save_dir=plot_save_dir)
-    
-   # generate_legend_svg(save_dir=plot_save_dir)
+    # generate_legend_svg(save_dir=plot_save_dir)

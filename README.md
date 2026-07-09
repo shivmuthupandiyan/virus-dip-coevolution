@@ -5,7 +5,7 @@ This repository contains the source code and simulation framework for the paper:
 **Coevolutionary dynamics of viruses and their defective interfering particles**  
 *Shiv Muthupandiyan, John Yin*  
 Wisconsin Institute for Discovery, Chemical and Biological Engineering, University of Wisconsin-Madison.  
-**DOI:** [10.1101/2025.10.22.683971](https://doi.org/10.1101/2025.10.22.683971)
+**DOI:** [10.1371/journal.pcbi.1014300](https://doi.org/10.1371/journal.pcbi.1014300)
 
 ## Overview
 
@@ -16,18 +16,21 @@ Unlike traditional strong-selection models, this framework captures **strong-mut
 
 ## Installation
 
-### Dependencies
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```bash
-pip install numpy scipy pandas matplotlib seaborn ipykernel imageio tqdm
+# Install uv (if you don't already have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create the environment and install all dependencies
+uv sync
 ```
 
-Or use the included virtual environment:
+Run scripts and notebooks inside the managed environment with `uv run`:
 
 ```bash
-source venv/bin/activate  # On Unix/macOS
-# or
-venv\Scripts\activate  # On Windows
+uv run python paper_figures/fig4_latin_hypercube.py
+uv run jupyter lab figures.ipynb
 ```
 
 ## Usage
@@ -35,13 +38,15 @@ venv\Scripts\activate  # On Windows
 ### Basic Example
 
 ```python
-from pdesolver import sol_dip_virus_pde_fft, plot_mean_phenotypes
+from pdesolver import sol_dip_virus_pde_fft, default_params
 
-# Use default parameters to reproduce baseline dynamics
-results = sol_dip_virus_pde_fft()
+# Run with baseline parameters (pass {} to use all defaults)
+results = sol_dip_virus_pde_fft({})
 
-# Plot the results
-plot_mean_phenotypes(results)
+# Total virus / DIP populations over time
+t = results['time_points']
+V = results['V_total_time']
+D = results['D_total_time']
 ```
 
 ### Custom Parameters
@@ -63,10 +68,12 @@ results = sol_dip_virus_pde_fft(params, save_density_series=True)
 
 The solver returns a dictionary containing:
 
-- `t` - Time points
-- `V_total`, `D_total` - Total population sizes over time
-- `V_mean`, `D_mean` - Mean phenotype positions (x, y coordinates)
-- `density_series` - (Optional) Full spatial density fields at each time point
+- `time_points` — Time points
+- `V_total_time`, `D_total_time` — Total virus and DIP population sizes over time
+- `mean_phenotype_v`, `mean_phenotype_d` — Mean phenotype positions (x, y coordinates), shape `(T, 2)`
+- `mean_dist_from_origin_v` — Mean virus distance from the fitness optimum over time
+- `termination_reason`, `success` — Solver status
+- `v_dist_time`, `d_dist_time`, `PHENOx`, `PHENOy` — (Optional, when `save_density_series=True`) full spatial density fields and phenotype coordinate grids
 
 ## Model Parameters
 
@@ -108,15 +115,17 @@ The model is controlled by a parameter dictionary with the following options:
 
 ```
 ├── pdesolver.py              # Core PDE solver module
-├── figures.ipynb             # Main analysis and visualization notebook
+├── figures.ipynb             # Main notebook: Figs 1-3 (dynamics, heatmaps) + Fig 5C, 6C panels
+├── pyproject.toml            # Project metadata and dependencies (uv)
+├── uv.lock                   # Pinned dependency versions
 ├── README.md                 # This file
-├── paper_figures/            # Publication figure generation scripts
-│   ├── fig5_latin_hypercube.py   # Parameter sensitivity analysis
-│   ├── fig6_cross_passage.py     # Time-shift resistances
-│   ├── fig7_escape.py            # Escape dynamics analysis
-│   ├── s5_ndim.ipynb             # Supplementary: N-dimensional analysis
-│   └── s6_kernels.ipynb          # Supplementary: Kernel method analysis
-└── venv/                     # Python virtual environment
+└── paper_figures/            # Publication figure generation scripts
+    ├── fig4_latin_hypercube.py               # Fig 4: global sensitivity analysis (LHS) + S1 Table
+    ├── fig5_cross_passage.py                 # Fig 5: time-shift / fold-resistance analysis
+    ├── fig6_escape.py                        # Fig 6: escape vs. fitness-cost trade-off
+    ├── s1_table_classification_stability.py  # S1 Table: LHS classification-stability diagnostic
+    ├── s1_ndim.ipynb                         # S1 Fig: higher-dimensional model
+    └── s2_kernels.ipynb                      # S2 Fig: alternative interference kernels
 ```
 
 ## Mathematical Framework
@@ -131,19 +140,22 @@ Where $I_V$ and $I_D$ represent the phenotype-dependent interference cost and be
 
 ## Citation
 
-If you use this code in your research, please cite the following preprint:
+If you use this code in your research, please cite:
 
-> Muthupandiyan, S., & Yin, J. (2025). **Coevolutionary dynamics of viruses and their defective interfering particles**. *bioRxiv*. DOI: https://doi.org/10.1101/2025.10.22.683971
+> Muthupandiyan S, Yin J (2026). **Coevolutionary dynamics of viruses and their defective interfering particles**. *PLOS Computational Biology* 22(5): e1014300. https://doi.org/10.1371/journal.pcbi.1014300
 
 **BibTeX:**
 ```bibtex
-@article{muthupandiyan2025coevolutionary,
+@article{muthupandiyan2026coevolutionary,
   title={Coevolutionary dynamics of viruses and their defective interfering particles},
   author={Muthupandiyan, Shiv and Yin, John},
-  journal={bioRxiv},
-  year={2025},
-  doi={10.1101/2025.10.22.683971},
-  publisher={Cold Spring Harbor Laboratory}
+  journal={PLOS Computational Biology},
+  volume={22},
+  number={5},
+  pages={e1014300},
+  year={2026},
+  doi={10.1371/journal.pcbi.1014300},
+  publisher={Public Library of Science}
 }
 ```
 
